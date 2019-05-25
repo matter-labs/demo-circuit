@@ -40,6 +40,10 @@ struct XorCircuit<E: Engine> {
     c: Option<E::Fr>,
 }
 
+macro_rules! csprintln {
+    ($x:expr,$($arg:tt)*) => (if $x {println!($($arg)*)});
+}
+
 // Implementation of our circuit:
 // Given a bit `c`, prove that we know bits `a` and `b` such that `c = a xor b`
 impl<E: Engine> Circuit<E> for XorCircuit<E> {
@@ -70,7 +74,7 @@ impl<E: Engine> Circuit<E> for XorCircuit<E> {
         // c = a xor b
         let c = cs.alloc_input(|| "c", || self.c.grab())?;
 
-        a_bit.get_value();
+        csprintln!(true, "hey!!! {:?}", a_bit.get_value());
 
         // 2a * b = a + b - c
         cs.enforce(
