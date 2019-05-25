@@ -4,6 +4,21 @@ extern crate rand;
 extern crate ff;
 extern crate sapling_crypto;
 
+use sapling_crypto::circuit::boolean::{Boolean, AllocatedBit};
+
+// use sapling_crypto::circuit::{
+//     Assignment,
+//     boolean,
+//     ecc,
+//     pedersen_hash,
+//     blake2s,
+//     sha256,
+//     num,
+//     multipack,
+//     baby_eddsa,
+//     float_point,
+// };
+
 use bellman::{Circuit, ConstraintSystem, SynthesisError};
 use ff::{Field, PrimeField};
 use pairing::{Engine};
@@ -37,8 +52,12 @@ impl<E: Engine> Circuit<E> for XorCircuit<E> {
         // a * a = a
         // b * b = b
         // 2a * b = a + b - c
-
+        
         let a = cs.alloc(|| "a", || self.a.grab())?;
+
+        let a_bit = Boolean::from(AllocatedBit::alloc(
+            cs.namespace(|| "bit_a"), Some(true)
+        )?);
 
         // a * a = a
         cs.enforce(|| "a is a boolean", |lc| lc + a, |lc| lc + a, |lc| lc + a);
@@ -50,6 +69,8 @@ impl<E: Engine> Circuit<E> for XorCircuit<E> {
 
         // c = a xor b
         let c = cs.alloc_input(|| "c", || self.c.grab())?;
+
+        a_bit.get_value();
 
         // 2a * b = a + b - c
         cs.enforce(
@@ -133,7 +154,7 @@ use sapling_crypto::circuit::test::TestConstraintSystem;
         dbg!(cs.num_inputs());
 
         if let Some(token) = cs.which_is_unsatisfied() {
-            panic!("Error: {} is unsatisfied\n", token);
+            eprintln!("Error: {} is unsatisfied", token);
         }
     }
 
