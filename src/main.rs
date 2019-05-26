@@ -2,9 +2,9 @@ extern crate bellman;
 extern crate pairing;
 extern crate rand;
 extern crate ff;
-extern crate sapling_crypto;
+extern crate franklin_crypto;
 
-use sapling_crypto::circuit::boolean::{Boolean, AllocatedBit};
+use franklin_crypto::circuit::boolean::{Boolean, AllocatedBit};
 
 // use sapling_crypto::circuit::{
 //     Assignment,

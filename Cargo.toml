@@ -11,4 +11,5 @@ num-bigint = "0.2"
 ff = { package = "ff_ce", version = "0.6.0", features = ["derive"] }
 pairing = { package = "pairing_ce", version = "0.17.0" }
 bellman = { package = "bellman_ce", version = "0.3.0" }
-sapling-crypto = { package = "sapling-crypto_ce", version = "0.0.5" }
+#sapling-crypto = { package = "sapling-crypto_ce", version = "0.0.5" }
+franklin-crypto = { path = "franklin-crypto" }
