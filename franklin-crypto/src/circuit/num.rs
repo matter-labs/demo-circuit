@@ -449,6 +449,112 @@ impl<E: Engine> AllocatedNum<E> {
         Ok(c)
     }
 
+    /// Takes two allocated numbers (a, b) and returns
+    /// allocated boolean variable with value `true`
+    /// if the `a` and `b` are equal, `false` otherwise.
+    pub fn equals<CS>(
+        mut cs: CS,
+        a: &Self,
+        b: &Self
+    ) -> Result<boolean::AllocatedBit, SynthesisError>
+        where E: Engine,
+            CS: ConstraintSystem<E>
+    {
+        let mut cs = cs.namespace(|| "equals");
+
+        // Allocate and constrain `r`: result boolean bit. 
+        // It equals `true` if `a` equals `b`, `false` otherwise
+
+        let r_value = match (a.value, b.value) {
+            (Some(a), Some(b))  => Some(a == b),
+            _                   => None,
+        };
+
+        let r = boolean::AllocatedBit::alloc_unsafe(&mut cs, r_value)?;
+
+        // Let `delta = a - b`
+
+        let delta_value = match (a.value, b.value) {
+            (Some(a), Some(b))  => {
+                // return (b - a)
+                let mut x = a.clone();
+                x.negate();
+                let mut y = b.clone();
+                y.add_assign(&x);
+                Some(y)
+            },
+            _ => None,
+        };
+
+        let delta_inv_value = delta_value.as_ref().map(|delta_value| {
+            let tmp = delta_value.clone(); 
+            if tmp.is_zero() {
+                E::Fr::one() // we can return any number here, it doesn't matter
+            } else {
+                tmp.inverse().unwrap()
+            }
+        });
+
+        let delta_inv = Self::alloc( &mut cs, || delta_inv_value.grab() )?;
+
+        // Allocate `t = delta * delta_inv`
+        // If `delta` is non-zero (a != b), `t` will equal 1
+        // If `delta` is zero (a == b), `t` cannot equal 1
+
+        let t_value = match (delta_value, delta_inv_value) {
+            (Some(a), Some(b))  => {
+                let mut t = a.clone();
+                t.mul_assign(&b);
+                Some(t)
+            },
+            _ => None,
+        };
+
+        let t = Self::alloc( &mut cs, || t_value.grab() )?;
+
+        // Constrain allocation: 
+        // t = (a - b) * delta_inv
+        cs.enforce(
+            || "nonzero assertion constraint",
+            |lc| lc + a.variable - b.variable,
+            |lc| lc + delta_inv.variable,
+            |lc| lc + t.variable,
+        );
+
+        // Constrain: 
+        // (a - b) * (t - 1) == 0
+        // This enforces that correct `delta_inv` was provided, 
+        // and thus `t` is 1 if `(a - b)` is non zero (a != b )
+        cs.enforce(
+            || "nonzero assertion constraint",
+            |lc| lc + a.variable - b.variable,
+            |lc| lc + t.variable - CS::one(),
+            |lc| lc
+        );
+
+        // Constrain: 
+        // (a - b) * r == 0
+        // This enforces that `r` is zero if `(a - b)` is non-zero (a != b)
+        cs.enforce(
+            || "boolean constraint",
+            |lc| lc + a.variable - b.variable,
+            |lc| lc + r.get_variable(),
+            |lc| lc
+        );
+
+        // Constrain: 
+        // (t - 1) * (r - 1) == 0
+        // This enforces that `r` is one if `t` is not one (a == b)
+        cs.enforce(
+            || "boolean constraint",
+            |lc| lc + t.get_variable() - CS::one(),
+            |lc| lc + r.get_variable() - CS::one(),
+            |lc| lc
+        );
+
+        Ok(r)
+    }
+
     /// Limits number of bits. The easiest example when required
     /// is to add or subtract two "small" (with bit length smaller 
     /// than one of the field) numbers and check for overflow
