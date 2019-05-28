@@ -808,18 +808,22 @@ mod test {
 
         let a = AllocatedNum::alloc(cs.namespace(|| "a"), || Ok(Fr::from_str("10").unwrap())).unwrap();
         let b = AllocatedNum::alloc(cs.namespace(|| "b"), || Ok(Fr::from_str("12").unwrap())).unwrap();
+        let c = AllocatedNum::alloc(cs.namespace(|| "c"), || Ok(Fr::from_str("10").unwrap())).unwrap();
 
-        let eq = AllocatedNum::equals(cs.namespace(|| "eq"), &a, &b).unwrap();
+        let not_eq = AllocatedNum::equals(cs.namespace(|| "not_eq"), &a, &b).unwrap();
+        let eq = AllocatedNum::equals(cs.namespace(|| "eq"), &a, &c).unwrap();
 
-        dbg!(cs.get("a/num"));
-        dbg!(cs.get("b/num"));
-        dbg!(cs.get("eq/t/num"));
-        dbg!(cs.get("eq/delta_inv/num"));
+        // dbg!(cs.get("a/num"));
+        // dbg!(cs.get("b/num"));
+        // dbg!(cs.get("eq/t/num"));
+        // dbg!(cs.get("eq/delta_inv/num"));
         dbg!(cs.which_is_unsatisfied());
-        assert!(cs.is_satisfied());
-        assert_eq!(cs.num_constraints(), 4);
 
-        assert_eq!(eq.get_value().unwrap(), false);
+        assert!(cs.is_satisfied());
+        assert_eq!(cs.num_constraints(), 8);
+
+        assert_eq!(not_eq.get_value().unwrap(), false);
+        assert_eq!(eq.get_value().unwrap(), true);
     }
 
     #[test]
