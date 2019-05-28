@@ -805,6 +805,26 @@ mod test {
     }
 
     #[test]
+    fn test_num_equals() {
+        let mut cs = TestConstraintSystem::<Bls12>::new();
+
+        let a = AllocatedNum::alloc(cs.namespace(|| "a"), || Ok(Fr::from_str("10").unwrap())).unwrap();
+        let b = AllocatedNum::alloc(cs.namespace(|| "b"), || Ok(Fr::from_str("12").unwrap())).unwrap();
+
+        let condition_true = Boolean::constant(true);
+        let c = AllocatedNum::conditionally_select(cs.namespace(|| "c"), &a, &b, &condition_true).unwrap();
+
+        let condition_false = Boolean::constant(false);
+        let d = AllocatedNum::conditionally_select(cs.namespace(|| "d"), &a, &b, &condition_false).unwrap();
+
+        assert!(cs.is_satisfied());
+        assert!(cs.num_constraints() == 2);
+
+        assert_eq!(a.value.unwrap(), c.value.unwrap());
+        assert_eq!(b.value.unwrap(), d.value.unwrap());
+    }
+
+    #[test]
     fn test_num_nonzero() {
         {
             let mut cs = TestConstraintSystem::<Bls12>::new();
