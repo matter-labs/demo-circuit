@@ -551,6 +551,21 @@ impl<E: Engine> AllocatedNum<E> {
         Ok(r)
     }
 
+    /// Returns `a == b ? x : y`
+    pub fn select_ifeq<CS>(
+        mut cs: CS,
+        a: &Self,
+        b: &Self,
+        x: &Self,
+        y: &Self,
+    ) -> Result<Self, SynthesisError>
+        where E: Engine,
+            CS: ConstraintSystem<E>
+    {
+        let eq = Self::equals(cs.namespace(|| "eq"), a, b)?;
+        Self::conditionally_select(cs.namespace(|| "select"), x, y, &Boolean::from(eq))
+    }
+
     /// Limits number of bits. The easiest example when required
     /// is to add or subtract two "small" (with bit length smaller 
     /// than one of the field) numbers and check for overflow
@@ -816,6 +831,25 @@ mod test {
 
         assert_eq!(not_eq.get_value().unwrap(), false);
         assert_eq!(eq.get_value().unwrap(), true);
+    }
+
+    #[test]
+    fn select_if_equals() {
+        let mut cs = TestConstraintSystem::<Bls12>::new();
+
+        let a = AllocatedNum::alloc(cs.namespace(|| "a"), || Ok(Fr::from_str("0").unwrap())).unwrap();
+        let b = AllocatedNum::alloc(cs.namespace(|| "b"), || Ok(Fr::from_str("1").unwrap())).unwrap();
+        let c = AllocatedNum::alloc(cs.namespace(|| "c"), || Ok(Fr::from_str("0").unwrap())).unwrap();
+
+        let x = AllocatedNum::alloc(cs.namespace(|| "x"), || Ok(Fr::from_str("100").unwrap())).unwrap();
+        let y = AllocatedNum::alloc(cs.namespace(|| "y"), || Ok(Fr::from_str("200").unwrap())).unwrap();
+
+        let n_eq =     AllocatedNum::select_ifeq(cs.namespace(|| "ifeq"),  &a, &c, &x, &y).unwrap();
+        let n_not_eq = AllocatedNum::select_ifeq(cs.namespace(|| "ifneq"), &a, &b, &x, &y).unwrap();
+
+        assert!(cs.is_satisfied());
+        assert_eq!(n_eq.get_value().unwrap(), Fr::from_str("100").unwrap());
+        assert_eq!(n_not_eq.get_value().unwrap(), Fr::from_str("200").unwrap());
     }
 
     #[test]
