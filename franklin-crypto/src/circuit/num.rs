@@ -460,7 +460,7 @@ impl<E: Engine> AllocatedNum<E> {
         where E: Engine,
             CS: ConstraintSystem<E>
     {
-        let mut cs = cs.namespace(|| "equals");
+        //let mut cs = cs.namespace(|| "equals");
 
         // Allocate and constrain `r`: result boolean bit. 
         // It equals `true` if `a` equals `b`, `false` otherwise
@@ -470,18 +470,16 @@ impl<E: Engine> AllocatedNum<E> {
             _                   => None,
         };
 
-        let r = boolean::AllocatedBit::alloc_unsafe(&mut cs, r_value)?;
+        let r = boolean::AllocatedBit::alloc_unsafe(cs.namespace(|| "r"), r_value)?;
 
         // Let `delta = a - b`
 
         let delta_value = match (a.value, b.value) {
             (Some(a), Some(b))  => {
-                // return (b - a)
-                let mut x = a.clone();
-                x.negate();
-                let mut y = b.clone();
-                y.add_assign(&x);
-                Some(y)
+                // return (a - b)
+                let mut a = a;
+                a.sub_assign(&b);
+                Some(a)
             },
             _ => None,
         };
@@ -495,7 +493,7 @@ impl<E: Engine> AllocatedNum<E> {
             }
         });
 
-        let delta_inv = Self::alloc( &mut cs, || delta_inv_value.grab() )?;
+        let delta_inv = Self::alloc(cs.namespace(|| "delta_inv"), || delta_inv_value.grab() )?;
 
         // Allocate `t = delta * delta_inv`
         // If `delta` is non-zero (a != b), `t` will equal 1
@@ -510,12 +508,12 @@ impl<E: Engine> AllocatedNum<E> {
             _ => None,
         };
 
-        let t = Self::alloc( &mut cs, || t_value.grab() )?;
+        let t = Self::alloc(cs.namespace(|| "t"), || t_value.grab() )?;
 
         // Constrain allocation: 
         // t = (a - b) * delta_inv
         cs.enforce(
-            || "nonzero assertion constraint",
+            || "t = (a - b) * delta_inv",
             |lc| lc + a.variable - b.variable,
             |lc| lc + delta_inv.variable,
             |lc| lc + t.variable,
@@ -526,7 +524,7 @@ impl<E: Engine> AllocatedNum<E> {
         // This enforces that correct `delta_inv` was provided, 
         // and thus `t` is 1 if `(a - b)` is non zero (a != b )
         cs.enforce(
-            || "nonzero assertion constraint",
+            || "(a - b) * (t - 1) == 0",
             |lc| lc + a.variable - b.variable,
             |lc| lc + t.variable - CS::one(),
             |lc| lc
@@ -536,7 +534,7 @@ impl<E: Engine> AllocatedNum<E> {
         // (a - b) * r == 0
         // This enforces that `r` is zero if `(a - b)` is non-zero (a != b)
         cs.enforce(
-            || "boolean constraint",
+            || "(a - b) * r == 0",
             |lc| lc + a.variable - b.variable,
             |lc| lc + r.get_variable(),
             |lc| lc
@@ -546,7 +544,7 @@ impl<E: Engine> AllocatedNum<E> {
         // (t - 1) * (r - 1) == 0
         // This enforces that `r` is one if `t` is not one (a == b)
         cs.enforce(
-            || "boolean constraint",
+            || "(t - 1) * (r - 1) == 0",
             |lc| lc + t.get_variable() - CS::one(),
             |lc| lc + r.get_variable() - CS::one(),
             |lc| lc
@@ -811,17 +809,17 @@ mod test {
         let a = AllocatedNum::alloc(cs.namespace(|| "a"), || Ok(Fr::from_str("10").unwrap())).unwrap();
         let b = AllocatedNum::alloc(cs.namespace(|| "b"), || Ok(Fr::from_str("12").unwrap())).unwrap();
 
-        let condition_true = Boolean::constant(true);
-        let c = AllocatedNum::conditionally_select(cs.namespace(|| "c"), &a, &b, &condition_true).unwrap();
+        let eq = AllocatedNum::equals(cs.namespace(|| "eq"), &a, &b).unwrap();
 
-        let condition_false = Boolean::constant(false);
-        let d = AllocatedNum::conditionally_select(cs.namespace(|| "d"), &a, &b, &condition_false).unwrap();
-
+        dbg!(cs.get("a/num"));
+        dbg!(cs.get("b/num"));
+        dbg!(cs.get("eq/t/num"));
+        dbg!(cs.get("eq/delta_inv/num"));
+        dbg!(cs.which_is_unsatisfied());
         assert!(cs.is_satisfied());
-        assert!(cs.num_constraints() == 2);
+        assert_eq!(cs.num_constraints(), 4);
 
-        assert_eq!(a.value.unwrap(), c.value.unwrap());
-        assert_eq!(b.value.unwrap(), d.value.unwrap());
+        assert_eq!(eq.get_value().unwrap(), false);
     }
 
     #[test]
