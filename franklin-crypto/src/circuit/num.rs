@@ -460,8 +460,6 @@ impl<E: Engine> AllocatedNum<E> {
         where E: Engine,
             CS: ConstraintSystem<E>
     {
-        //let mut cs = cs.namespace(|| "equals");
-
         // Allocate and constrain `r`: result boolean bit. 
         // It equals `true` if `a` equals `b`, `false` otherwise
 
@@ -813,14 +811,8 @@ mod test {
         let not_eq = AllocatedNum::equals(cs.namespace(|| "not_eq"), &a, &b).unwrap();
         let eq = AllocatedNum::equals(cs.namespace(|| "eq"), &a, &c).unwrap();
 
-        // dbg!(cs.get("a/num"));
-        // dbg!(cs.get("b/num"));
-        // dbg!(cs.get("eq/t/num"));
-        // dbg!(cs.get("eq/delta_inv/num"));
-        dbg!(cs.which_is_unsatisfied());
-
         assert!(cs.is_satisfied());
-        assert_eq!(cs.num_constraints(), 8);
+        assert_eq!(cs.num_constraints(), 2 * 4);
 
         assert_eq!(not_eq.get_value().unwrap(), false);
         assert_eq!(eq.get_value().unwrap(), true);
