@@ -139,7 +139,7 @@ fn main() {
 mod tests {
 
 use super::*;
-use sapling_crypto::circuit::test::TestConstraintSystem;
+use franklin_crypto::circuit::test::TestConstraintSystem;
 
     #[test]
     fn test_circuit() {
