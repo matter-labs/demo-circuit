@@ -3,69 +3,112 @@ use super::multieq::MultiEq;
 use super::boolean::Boolean;
 use bellman::{ConstraintSystem, SynthesisError};
 use bellman::pairing::Engine;
+use circuit::Assignment;
+use bellman::pairing::ff::{
+    Field,
+    SqrtField,
+    PrimeField,
+    PrimeFieldRepr,
+    BitIterator
+};
+use bellman::{
+    LinearCombination,
+    Variable
+};
 
-const ROUND_CONSTANTS: [u32; 64] = [
-    0x428a2f98, 0x71374491, 0xb5c0fbcf, 0xe9b5dba5, 0x3956c25b, 0x59f111f1, 0x923f82a4, 0xab1c5ed5,
-    0xd807aa98, 0x12835b01, 0x243185be, 0x550c7dc3, 0x72be5d74, 0x80deb1fe, 0x9bdc06a7, 0xc19bf174,
-    0xe49b69c1, 0xefbe4786, 0x0fc19dc6, 0x240ca1cc, 0x2de92c6f, 0x4a7484aa, 0x5cb0a9dc, 0x76f988da,
-    0x983e5152, 0xa831c66d, 0xb00327c8, 0xbf597fc7, 0xc6e00bf3, 0xd5a79147, 0x06ca6351, 0x14292967,
-    0x27b70a85, 0x2e1b2138, 0x4d2c6dfc, 0x53380d13, 0x650a7354, 0x766a0abb, 0x81c2c92e, 0x92722c85,
-    0xa2bfe8a1, 0xa81a664b, 0xc24b8b70, 0xc76c51a3, 0xd192e819, 0xd6990624, 0xf40e3585, 0x106aa070,
-    0x19a4c116, 0x1e376c08, 0x2748774c, 0x34b0bcb5, 0x391c0cb3, 0x4ed8aa4a, 0x5b9cca4f, 0x682e6ff3,
-    0x748f82ee, 0x78a5636f, 0x84c87814, 0x8cc70208, 0x90befffa, 0xa4506ceb, 0xbef9a3f7, 0xc67178f2
-];
-
-const IV: [u32; 8] = [ // the same as for sha256
-    0x6a09e667, 0xbb67ae85, 0x3c6ef372, 0xa54ff53a,
-    0x510e527f, 0x9b05688c, 0x1f83d9ab, 0x5be0cd19
-];
-
-pub fn rescue<E, CS>(
-    mut cs: CS,
-    input: &[Boolean]
-) -> Result<Vec<Boolean>, SynthesisError>
-    where E: Engine, CS: ConstraintSystem<E>
-{
-    assert!(input.len() % 8 == 0);
-
-    let mut padded = input.to_vec();
-    let plen = padded.len() as u64; 
-    // append a single '1' bit
-    padded.push(Boolean::constant(true));
-    // append K '0' bits, where K is the minimum number >= 0 such that L + 1 + K + 64 is a multiple of 512
-    while (padded.len() + 64) % 512 != 0 {
-        padded.push(Boolean::constant(false));
-    }
-    // append L as a 64-bit big-endian integer, making the total post-processed length a multiple of 512 bits
-    for b in (0..64).rev().map(|i| (plen >> i) & 1 == 1) {
-        padded.push(Boolean::constant(b));
-    }
-    assert!(padded.len() % 512 == 0);
-    let mut cur = get_rescue_iv();
-    for (i, block) in padded.chunks(512).enumerate() {
-        cur = rescue_compression_function(
-            cs.namespace(|| format!("block {}", i)),
-            block,
-            &cur
-        )?;
-    }
-
-    Ok(cur.into_iter()
-    .flat_map(|e| e.into_bits_be())
-    .collect())
+#[derive(Clone)]
+struct AllocatedRepr<E:Engine> {
+    variable: Variable,
+    value: Option<E::Fr>
 }
 
-pub fn get_rescue_iv() -> Vec<UInt32> {
-    IV.iter().map(|&v| UInt32::constant(v)).collect()
+impl<E:Engine> AllocatedRepr<E>{
+    pub fn get_value(&self) -> Option<E::Fr> {
+        self.value
+    }
+
+    pub fn get_variable(&self) -> Variable {
+        self.variable
+    }
+
+    pub fn alloc<CS>(
+        cs: &mut CS,
+        msg : &str,
+        val: E::Fr,
+    ) -> Result<Self, SynthesisError>
+        where E: Engine,
+              CS: ConstraintSystem<E>
+    {
+        let var = cs.alloc(|| &msg[..], || { Ok(val) })?;
+        Ok(AllocatedRepr {
+            variable: var,
+            value: Some(val)
+        })
+    }
+    pub fn raise_to_power<CS>(
+        mut cs: CS,
+        x: &Self,
+        alpha: &Self
+    ) -> Result<Self, SynthesisError>
+        where CS: ConstraintSystem<E>
+    {
+        let cs = &mut cs.namespace(|| "power");
+        if alpha.get_value().unwrap().is_zero() {
+            Ok(Self::alloc(cs,"power result",E::Fr::one()).unwrap())
+        }else{
+            let alpha_bits = {
+                let mut res:Vec<bool>=BitIterator::new(alpha.get_value().unwrap().into_repr()).collect();
+                while (res.len()>1)&&(!res[res.len()-1]) {
+                    res.remove(res.len()-1);
+                }
+                res
+            };
+            let vars = { //Define all multipliers needed to rise x to the power alpha
+                let res= vec![x];
+                for i in 1..alpha_bits.len(){
+                    let cs = &mut cs.namespace(|| format!("Multiplier{}", i));
+                    let v = res[res.len()-1];
+                    let mut sqr_=v.get_value().unwrap();
+                    sqr_.mul_assign(&sqr_.clone());
+                    let sqr_v=Self::alloc(cs,"multiplier", sqr_)?;
+                    cs.enforce( 
+                        || "define multiplier",
+                        |lc| lc + v.variable,
+                        |lc| lc + v.variable,
+                        |lc| lc + sqr_v.variable
+                    );
+                };
+                res
+            };
+            assert_eq!(vars.len(),alpha_bits.len());
+            let mut multipliers= vec![];
+            for (i,b) in alpha_bits.iter().enumerate(){
+                if *b { multipliers.push(vars[i]); }
+            }
+            assert!(multipliers.len()>0);
+            if multipliers.len()==1 {
+                Ok(multipliers.last().unwrap().clone().clone())
+            }else{
+                let mut new_vars=vec![];
+                for i in 1..multipliers.len(){
+                    let cs = &mut cs.namespace(|| format!("Multiply{}", i));
+                    let prev_v = if i==1{ multipliers[0] }else{ new_vars.last().unwrap() };
+                    let mut v= prev_v.get_value().unwrap();
+                    v.mul_assign(&multipliers[i].get_value().unwrap());
+                    let next_v=Self::alloc(cs,format!("powerresult{}",i).as_str(), v )?;
+                    cs.enforce(
+                        || "define powerresult",
+                        |lc| lc + prev_v.variable,
+                        |lc| lc + multipliers[i].variable,
+                        |lc| lc + next_v.variable
+                    );
+                    new_vars.push(next_v);
+                }
+                Ok(new_vars.last().unwrap().clone().clone())
+            }
+        }
+    }
+
+
 }
 
-pub fn rescue_compression_function<E, CS>(
-    cs: CS,
-    input: &[Boolean],
-    current_hash_value: &[UInt32]
-) -> Result<Vec<UInt32>, SynthesisError>
-    where E: Engine, CS: ConstraintSystem<E>
-{
-    assert_eq!(input.len(), 512);
-    assert_eq!(current_hash_value.len(), 8);
-}

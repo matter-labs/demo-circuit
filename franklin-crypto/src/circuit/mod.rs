@@ -13,6 +13,7 @@ pub mod pedersen_hash;
 pub mod baby_pedersen_hash;
 pub mod multipack;
 pub mod sha256;
+pub mod rescue;
 pub mod baby_eddsa;
 pub mod float_point;
 pub mod polynomial_lookup;
