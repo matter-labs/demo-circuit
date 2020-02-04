@@ -16,11 +16,12 @@ use bellman::{
     Variable
 };
 
-#[derive(Clone)]
+#[derive(Clone,Copy)]
 struct AllocatedRepr<E:Engine> {
     variable: Variable,
     value: Option<E::Fr>
 }
+
 
 impl<E:Engine> AllocatedRepr<E>{
     pub fn get_value(&self) -> Option<E::Fr> {
@@ -47,72 +48,41 @@ impl<E:Engine> AllocatedRepr<E>{
     }
     pub fn raise_to_power<CS>(
         mut cs: CS,
+        name:&str,
         x: &Self,
         alpha: &Self
     ) -> Result<Self, SynthesisError>
         where CS: ConstraintSystem<E>
     {
-        let cs = &mut cs.namespace(|| "power");
+        let cs = &mut cs.namespace(|| &name[..]);
         if alpha.get_value().unwrap().is_zero() {
             Ok(Self::alloc(cs,"power result",Some(E::Fr::one()))?)
         }else{
-            let n_bits={
-                let mut res=0;
-                for (i,b) in BitIterator::new(alpha.get_value().unwrap().into_repr()).enumerate(){
-                    if b.clone() {
-                        res=i+1;
-                    }
-                }          
-                res
-            };
-            let vars = { //Define all multipliers with powers 2^k needed to be defined to rise x to the power alpha
-                let mut res:Vec<AllocatedRepr<E>>= vec![x.clone()];
-                for i in 1..n_bits{
-                    let cs = &mut cs.namespace(|| format!("Multiplier{}", i));
-                    let v = &res[res.len()-1];
-                    let mut sqr_=v.get_value().unwrap();
-                    sqr_.mul_assign(&sqr_.clone());
-                    let sqr_v=Self::alloc(cs,"multiplier", Some(sqr_))?;
-                    cs.enforce( 
-                        || "define multiplier",
-                        |lc| lc + v.variable,
-                        |lc| lc + v.variable,
-                        |lc| lc + sqr_v.variable
-                    );
-                    res.push(sqr_v);
-                };
-                res
-            };
-            assert_eq!(vars.len(),n_bits);
-            let multipliers={//Defining list of multipliers with powers 2^k needed to multiply
-                let mut res=vec![];
-                for (i,b) in BitIterator::new(alpha.get_value().unwrap().into_repr()).enumerate(){
-                    if b.clone() {
-                        res.push(&vars[i]); 
-                    }
-                }
-                res
-            };
-            assert!(multipliers.len()>0);
-            if multipliers.len()==1 {
-                Ok(multipliers.last().unwrap().clone().clone())
+            if alpha.get_value().unwrap() == E::Fr::one() {
+                Ok(x.clone())
             }else{
-                let mut new_vars:Vec<AllocatedRepr<E>>=vec![];
-                for i in 1..multipliers.len(){
-                    let cs = &mut cs.namespace(|| format!("Multiply{}", i));
-                    let prev_v = if i==1{ &multipliers[0] }else{ new_vars.last().unwrap() };
-                    let mut v= prev_v.get_value().unwrap();
-                    v.mul_assign(&multipliers[i].get_value().unwrap());
-                    let next_v=Self::alloc(cs,format!("powerresult{}",i).as_str(), Some(v) )?;
+                let mut res = x.clone();
+                let mut counter=E::Fr::one();
+                let mut c=1;
+                loop{
+                    counter.add_assign(&E::Fr::one());
+                    c+=1;
+                    let mut val=res.get_value().unwrap().clone();
+                    val.mul_assign(&x.get_value().unwrap());
+                    let val_=Self::alloc(cs,&format!("power{}",c)[..], Some(val))?;
                     cs.enforce(
-                        || "define powerresult",
-                        |lc| lc + prev_v.variable,
-                        |lc| lc + multipliers[i].variable,
-                        |lc| lc + next_v.variable
+                        || format!("define_power{}",c),
+                        |lc| lc + res.variable,
+                        |lc| lc + x.variable,
+                        |lc| lc + val_.variable
+            
                     );
-                    new_vars.push(next_v);
+                    res=val_;
+                    if counter==alpha.get_value().unwrap() {
+                        break;
+                    }
                 }
-                Ok(new_vars.last().unwrap().clone().clone())
+                Ok(res)
             }
         }
     }
@@ -135,12 +105,16 @@ mod test {
             ("v0","0"),
             ("v1","1"),
             ("v2","2"),
-            ("v3","1")
+            ("v3","3"),
+            ("v4","4"),
+            ("v5","5"),
+            ("v6","6"),
+            ("v7","7")
         ];
         for (name,x_s) in values{
             let x = AllocatedRepr::alloc(&mut cs, &name[..], Some(Fr::from_str(&x_s[..]).unwrap())).unwrap();
-            assert!(x.get_value().unwrap() == Fr::from_str(&x_s[..]).unwrap());
-            assert!(cs.get(&name[..]) == Fr::from_str(&x_s[..]).unwrap());
+            assert_eq!(x.get_value().unwrap(), Fr::from_str(&x_s[..]).unwrap());
+            assert_eq!(cs.get(&name[..]), Fr::from_str(&x_s[..]).unwrap());
             assert_eq!(cs.num_constraints(), 0);
         }
     }
@@ -151,6 +125,7 @@ mod test {
             ("1","0","1"),
             ("1","1","1"),
             ("1","2","1"),
+            ("1","3","1"),
             ("2","0","1"),
             ("2","1","2"),
             ("2","2","4"),
@@ -168,9 +143,9 @@ mod test {
             let mut cs = TestConstraintSystem::<Bls12>::new();
             let x = AllocatedRepr::alloc(&mut cs, "x", Some(Fr::from_str(&x_s[..]).unwrap())).unwrap();
             let a = AllocatedRepr::alloc(&mut cs, "a", Some(Fr::from_str(&a_s[..]).unwrap())).unwrap();
-            let y = AllocatedRepr::raise_to_power(&mut cs,&x,&a).unwrap();
-            assert_eq!(y.get_value().unwrap(),Fr::from_str(&y_s[..]).unwrap());
+            let y = AllocatedRepr::raise_to_power(&mut cs,&format!("{}^{}",x_s,a_s)[..],&x,&a).unwrap();
             assert!(cs.is_satisfied());
+            assert_eq!(y.get_value().unwrap(),Fr::from_str(&y_s[..]).unwrap());
         }
     }
 }
