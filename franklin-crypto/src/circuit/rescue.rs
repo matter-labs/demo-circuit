@@ -29,7 +29,7 @@ fn raise_to_power<CS,E>(
         let mut res = x.clone();
         let mut counter=E::Fr::one();
         let mut c=1;
-        loop{//this loop will repeat exactly alpha times
+        loop{//this loop will repeat exactly alpha-1 times
             counter.add_assign(&E::Fr::one());
             c+=1;
             let mut val=res.get_value().unwrap().clone();
