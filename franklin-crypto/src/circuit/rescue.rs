@@ -47,25 +47,21 @@ fn raise_to_power<CS,E>(
             }
             tmp
         };
+        assert_eq!(squares.len(),alpha_bits_be.len());
         let res={
-            let mut tmp=None;
+            let n=alpha_bits_be.len();
+            let mut tmp=squares[n-1].clone();
             //alpha is constant
-            for (i,b) in alpha_bits_be.into_iter().rev().enumerate(){
-                if b {
-                    tmp=match tmp{
-                        Some(ref value) => {
-                            Some(squares[i].mul(cs.namespace(|| format!("mul_due_to_bit{}",i)),value)?)
-                        },
-                        None => {
-                            Some(squares[i].clone())
-                        }
-                    };
+            for i in 1..n{
+                if alpha_bits_be[i] {
+                    tmp=squares[n-1-i].mul(cs.namespace(|| format!("mul_due_to_bit{}",i)),&tmp)?;
                 }
             }
-            tmp.unwrap().clone()
+            tmp.clone()
         };
         Ok(res) 
 }
+
 
 
 #[cfg(test)]
