@@ -32,16 +32,8 @@ fn raise_to_power<CS,E>(
         loop{//this loop will repeat exactly alpha-1 times
             counter.add_assign(&E::Fr::one());
             c+=1;
-            let mut val=res.get_value().unwrap().clone();
-            val.mul_assign(&x.get_value().unwrap());
-            let val_=AllocatedNum::alloc(cs.namespace(|| format!("power{}",c)),|| Ok(val) )?;
-            cs.enforce(
-                || format!("define_power{}",c),
-                |lc| lc + res.get_variable(),
-                |lc| lc + x.get_variable(),
-                |lc| lc + val_.get_variable()
-            );
-            res=val_;
+            let val = res.mul(cs.namespace(|| format!("power{}",c)), x)?;
+            res = val.clone();
             if counter==(*alpha) {
                 break;
             }
@@ -61,23 +53,28 @@ mod test {
     #[test]
     fn test_rising_to_power() {
         let values=vec![
-            ("1","2","1"),
-            ("1","3","1"),
-            ("2","2","4"),
-            ("2","3","8"),
-            ("2","4","16"),
-            ("2","5","32"),
-            ("2","6","64"),
-            ("2","7","128"),
-            ("3","2","9"),
-            ("3","3","27")
+            ("1","2","1",1),
+            ("1","3","1",2),
+            ("2","2","4",1),
+            ("2","3","8",2),
+            ("2","4","16",3),
+            ("2","5","32",4),
+            ("2","6","64",5),
+            ("2","7","128",6),
+            ("3","2","9",1),
+            ("3","3","27",2),
+            ("3","4","81",3),
+            ("3","5","243",4),
+            ("3","6","729",5),
+            ("3","7","2187",6)
         ];
-        for (x_s,a_s,y_s) in values{
+        for (x_s,a_s,y_s,n) in values{
             let mut cs = TestConstraintSystem::<Bls12>::new();
             let x = AllocatedNum::alloc(&mut cs, || Ok(Fr::from_str(&x_s[..]).unwrap()) ).unwrap();
             let a = Fr::from_str(&a_s[..]).unwrap();
             let y = raise_to_power(&mut cs,&x,&a).unwrap();
             assert!(cs.is_satisfied());
+            assert_eq!(cs.num_constraints(),n);
             assert_eq!(y.get_value().unwrap(),Fr::from_str(&y_s[..]).unwrap());
         }
     }
