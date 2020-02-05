@@ -26,19 +26,47 @@ fn raise_to_power<CS,E>(
 {
         assert_ne!(*alpha,E::Fr::zero());
         assert_ne!(*alpha,E::Fr::one());
-        let mut res = x.clone();
-        let mut counter=E::Fr::one();
-        let mut c=1;
-        loop{//this loop will repeat exactly alpha-1 times
-            counter.add_assign(&E::Fr::one());
-            c+=1;
-            let val = res.mul(cs.namespace(|| format!("power{}",c)), x)?;
-            res = val.clone();
-            if counter==(*alpha) {
-                break;
+        let alpha_bits_be = {
+            let mut tmp = Vec::with_capacity(E::Fr::NUM_BITS as usize);
+            let mut found_one = false;
+            for b in BitIterator::new(alpha.into_repr()) {
+                found_one |= b;
+                if !found_one {
+                    continue;
+                }
+                tmp.push(b);
             }
-        }
-        Ok(res)
+            tmp
+        };
+        let squares={//define square, square of square, etc variables
+            let mut tmp:Vec<AllocatedNum<E>>=vec![x.clone()];
+            //alpha is constant
+            for i in 1..alpha_bits_be.len(){
+                let sqr=tmp.last().unwrap().square(cs.namespace(|| format!("sqr{}",i)))?;
+                tmp.push(sqr);
+            }
+            tmp
+        };
+        let res={
+            let mut tmp:Vec<AllocatedNum<E>>=vec![];
+            //alpha is constant
+            for (i,b) in alpha_bits_be.into_iter().rev().enumerate(){
+                if b {
+                    let prev=tmp.last();
+                    let next=match prev{
+                        Some(ref value) => {
+                            squares[i].mul(cs.namespace(|| format!("mul_due_to_bit{}",i)),value)?
+                        },
+                        None => {
+                            squares[i].clone()
+                        }
+                    };
+                    tmp.push(next);
+                }
+            }
+            tmp.last().unwrap().clone()
+        };
+        Ok(res) 
 }
 
 #[cfg(test)]
@@ -55,18 +83,24 @@ mod test {
         let values=vec![
             ("1","2","1",1),
             ("1","3","1",2),
+            ("1","4","1",2),
+            ("1","5","1",3),
+            ("1","6","1",3),
+            ("1","7","1",4),
+
             ("2","2","4",1),
             ("2","3","8",2),
-            ("2","4","16",3),
-            ("2","5","32",4),
-            ("2","6","64",5),
-            ("2","7","128",6),
+            ("2","4","16",2),
+            ("2","5","32",3),
+            ("2","6","64",3),
+            ("2","7","128",4),
+
             ("3","2","9",1),
             ("3","3","27",2),
-            ("3","4","81",3),
-            ("3","5","243",4),
-            ("3","6","729",5),
-            ("3","7","2187",6)
+            ("3","4","81",2),
+            ("3","5","243",3),
+            ("3","6","729",3),
+            ("3","7","2187",4)
         ];
         for (x_s,a_s,y_s,n) in values{
             let mut cs = TestConstraintSystem::<Bls12>::new();
