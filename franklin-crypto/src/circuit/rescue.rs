@@ -48,26 +48,25 @@ fn raise_to_power<CS,E>(
             tmp
         };
         let res={
-            let mut tmp:Vec<AllocatedNum<E>>=vec![];
+            let mut tmp=None;
             //alpha is constant
             for (i,b) in alpha_bits_be.into_iter().rev().enumerate(){
                 if b {
-                    let prev=tmp.last();
-                    let next=match prev{
+                    tmp=match tmp{
                         Some(ref value) => {
-                            squares[i].mul(cs.namespace(|| format!("mul_due_to_bit{}",i)),value)?
+                            Some(squares[i].mul(cs.namespace(|| format!("mul_due_to_bit{}",i)),value)?)
                         },
                         None => {
-                            squares[i].clone()
+                            Some(squares[i].clone())
                         }
                     };
-                    tmp.push(next);
                 }
             }
-            tmp.last().unwrap().clone()
+            tmp.unwrap().clone()
         };
         Ok(res) 
 }
+
 
 #[cfg(test)]
 mod test {
@@ -81,6 +80,7 @@ mod test {
     #[test]
     fn test_rising_to_power() {
         let values=vec![
+            // x, a, x
             ("1","2","1",1),
             ("1","3","1",2),
             ("1","4","1",2),
