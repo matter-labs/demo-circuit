@@ -21,7 +21,7 @@ use bellman::{
 use super::num::AllocatedNum;
 
 
-fn raise_to_power<CS,E>(
+pub fn generate_powers<CS,E>(
     mut cs: CS,
     x: &AllocatedNum<E>,
     alpha: &E::Fr
@@ -65,13 +65,81 @@ fn raise_to_power<CS,E>(
         };
         Ok(res) 
 }
+fn generate_roots<CS,E>(
+    mut cs: CS,
+    x: &AllocatedNum<E>,
+    alphas: &(Option<E::Fr>,Option<E::Fr>)
+) -> Result<AllocatedNum<E>, SynthesisError>
+    where CS: ConstraintSystem<E>,E:Engine
+{
+        //Calculate the root
+        let result_var=AllocatedNum::alloc(cs.namespace(|| "found root"), ||{
+            let zero=BigUint::from_str("0").unwrap();
+            let one=BigUint::from_str("1").unwrap();
+            let p={
+                let mut p=E::Fr::char();
+                p.sub_noborrow(&E::Fr::one().into_repr());
+                let p=E::Fr::from_repr(p).unwrap();
+                fr_to_biguint(&p)+&one
+            };
+            let k_inv=fr_to_biguint(&alphas.1.unwrap());
+            let a=fr_to_biguint(&x.get_value().unwrap());
+            let res=a.modpow(&k_inv,&p);
+            Ok(biguint_to_fr(&res).unwrap())
+        })?;
+
+        {//Prove that the root is correct
+            let alpha_bits_be = {
+                let mut tmp = Vec::with_capacity(E::Fr::NUM_BITS as usize);
+                let mut found_one = false;
+                for b in BitIterator::new(alphas.0.unwrap().into_repr()) {
+                    found_one |= b;
+                    if !found_one {
+                        continue;
+                    }
+                    tmp.push(b);
+                }
+                tmp
+            };
+            let squares={
+                let mut tmp:Vec<AllocatedNum<E>>=vec![result_var.clone()];
+                for i in 1..alpha_bits_be.len(){
+                    let sqr=tmp.last().unwrap().square(cs.namespace(|| format!("root_result_sqr{}",i)))?;
+                    tmp.push(sqr);
+                }
+                tmp
+            };
+            assert_eq!(squares.len(),alpha_bits_be.len());
+            let n=alpha_bits_be.len();
+            let mut tmp=squares[n-1].clone();
+            let last_m={
+                let mut res=0;
+                for i in 1..n{
+                    if alpha_bits_be[i] {
+                        res=i;
+                    }
+                }
+                res
+            };
+            for i in 1..last_m{
+                if alpha_bits_be[i] {
+                    tmp=squares[n-1-i].mul(cs.namespace(|| format!("mul_due_to_bit{}",i)),&tmp)?;
+                }
+            }
+            cs.enforce(
+                || "last multiplication has to yield the argument",
+                |lc| lc + tmp.get_variable(),
+                |lc| lc + squares[last_m].get_variable(),
+                |lc| lc + x.get_variable()
+            );
+    
+        };
+        Ok(result_var) 
+}
+
 
 fn fr_to_biguint<Fr: PrimeField>(fr: &Fr) -> BigUint {
     let mut buffer = Vec::<u8>::new();
-    Fr::char()
-        .write_be(&mut buffer)
-        .expect("failed to write into Vec<u8>");
-    buffer.clear();
     fr.into_repr()
         .write_be(&mut buffer)
         .expect("failed to write into Vec<u8>");
@@ -83,7 +151,7 @@ fn biguint_to_fr<F: PrimeField>(bigint: &BigUint) -> Option<F> {
     F::from_str(&bigint.to_str_radix(10))
 }
 
-fn get_alphas<F:PrimeField>() -> Result<(F,F), SynthesisError>{
+fn get_alphas<F:PrimeField>() -> (Option<F>,Option<F>){
     let zero=BigUint::from_str("0").unwrap();
     let one=BigUint::from_str("1").unwrap();
     let p_m_1={
@@ -96,6 +164,8 @@ fn get_alphas<F:PrimeField>() -> Result<(F,F), SynthesisError>{
         let mut erath=vec![BigUint::from_str("2").unwrap(),BigUint::from_str("3").unwrap()];
         let mut res=erath.last().unwrap().clone();
         while (&p_m_1 % &res)==zero{
+            //if this prime number does not fulfill the condition gcd(alpha,p-1)=1
+            //we obtain the next prime number and test it
             while {
                 let mut prime=true;
                 for pr in erath.iter(){
@@ -109,11 +179,8 @@ fn get_alphas<F:PrimeField>() -> Result<(F,F), SynthesisError>{
         }
         res
     };
-    let anti_alpha:BigUint=&p_m_1/&alpha;
-    assert_eq!(((&alpha * &anti_alpha) % &p_m_1).clone(),one.clone() );
-    let res_alpha=biguint_to_fr(&alpha).unwrap();
-    let res_anti_alpha=biguint_to_fr(&anti_alpha).unwrap();
-    Ok((res_alpha,res_anti_alpha))
+    let anti_alpha=alpha.modpow(&(&p_m_1 - &one - &one), &p_m_1 );
+    (biguint_to_fr(&alpha),biguint_to_fr(&anti_alpha))
 }
 
 
@@ -127,7 +194,7 @@ mod test {
     use ::circuit::rescue::*;
 
     #[test]
-    fn test_rising_to_power() {
+    fn power_test() {
         let values=vec![
             // x, a, x^a, constraints
             ("1","2","1",1),
@@ -155,7 +222,20 @@ mod test {
             let mut cs = TestConstraintSystem::<Bn256>::new();
             let x = AllocatedNum::alloc(&mut cs, || Ok(Fr::from_str(&x_s[..]).unwrap()) ).unwrap();
             let a = Fr::from_str(&a_s[..]).unwrap();
-            let y = raise_to_power(&mut cs,&x,&a).unwrap();
+            let y = generate_powers(&mut cs,&x,&a).unwrap();
+
+            let xx= fr_to_biguint(&x.get_value().unwrap());
+            let yy= fr_to_biguint(&y.get_value().unwrap());
+            let k=fr_to_biguint(&a);
+            let p={
+                let mut p=Fr::char();
+                p.sub_noborrow(&Fr::one().into_repr());
+                let p=Fr::from_repr(p).unwrap();
+                let one=BigUint::from_str("1").unwrap();
+                fr_to_biguint(&p)+&one
+            };
+            assert_eq!(xx.modpow(&k,&p),yy.clone());
+
             assert!(cs.is_satisfied());
             assert_eq!(cs.num_constraints(),n);
             assert_eq!(y.get_value().unwrap(),Fr::from_str(&y_s[..]).unwrap());
@@ -163,28 +243,28 @@ mod test {
     }
 
     #[test]
-    fn alpha_test(){
-        let alphas=get_alphas::<Fr>().unwrap();
-        assert_ne!(alphas.0,Fr::zero());
-        assert_ne!(alphas.1,Fr::zero());
-        assert_ne!(alphas.0,Fr::one());
-        assert_ne!(alphas.1,Fr::one());
-        assert_ne!(alphas.0,alphas.1);
-        assert_eq!(alphas.0,Fr::from_str("5").unwrap());
-        let values=vec!["2","3","4","5","6","7"];
+    fn root_test(){
+        let alphas=get_alphas::<Fr>();
+        assert_eq!(alphas.0.unwrap(),Fr::from_str("5").unwrap());
+        let values=vec!["1","2","3","4","5","6","7","8","9"];
         for x_s in values{
             let mut cs = TestConstraintSystem::<Bn256>::new();
             let x = AllocatedNum::alloc(&mut cs, || Ok(Fr::from_str(&x_s[..]).unwrap()) ).unwrap();
-            {
-                let y = raise_to_power(cs.namespace(|| "part1"),&x,&alphas.0).unwrap();
-                let z = raise_to_power(cs.namespace(|| "part2"),&y,&alphas.1).unwrap();
-                assert_eq!(x.get_value().unwrap(),z.get_value().unwrap());
-            }
-            {
-                let y = raise_to_power(cs.namespace(|| "part3"),&x,&alphas.1).unwrap();
-                let z = raise_to_power(cs.namespace(|| "part4"),&y,&alphas.0).unwrap();
-                assert_eq!(x.get_value().unwrap(),z.get_value().unwrap());
-            }
+            let y = generate_roots(&mut cs, &x, &alphas).unwrap();
+
+            let xx= fr_to_biguint(&x.get_value().unwrap());
+            let yy= fr_to_biguint(&y.get_value().unwrap());
+            let k=fr_to_biguint(&alphas.0.unwrap());
+            
+            let p={
+                let mut p=Fr::char();
+                p.sub_noborrow(&Fr::one().into_repr());
+                let p=Fr::from_repr(p).unwrap();
+                let one=BigUint::from_str("1").unwrap();
+                fr_to_biguint(&p)+&one
+            };
+            assert_eq!(yy.modpow(&k,&p),xx.clone());
+            assert!(cs.is_satisfied());
         }
     }
 
