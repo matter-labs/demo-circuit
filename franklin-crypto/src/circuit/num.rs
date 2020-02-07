@@ -286,6 +286,38 @@ impl<E: Engine> AllocatedNum<E> {
             variable: var
         })
     }
+    pub fn add<CS>(
+        &self,
+        mut cs: CS,
+        other: &Self
+    ) -> Result<Self, SynthesisError>
+        where CS: ConstraintSystem<E>
+    {
+        let mut value = None;
+
+        let var = cs.alloc(|| "product num", || {
+            let mut tmp = *self.value.get()?;
+            tmp.add_assign(other.value.get()?);
+
+            value = Some(tmp);
+
+            Ok(tmp)
+        })?;
+
+        // Constrain: a * b = ab
+        cs.enforce(
+            || "multiplication constraint",
+            |lc| lc + self.variable + other.variable,
+            |lc| lc + CS::one(),
+            |lc| lc + var
+        );
+
+        Ok(AllocatedNum {
+            value: value,
+            variable: var
+        })
+    }
+
 
     pub fn square<CS>(
         &self,
