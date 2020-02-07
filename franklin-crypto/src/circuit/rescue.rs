@@ -141,7 +141,15 @@ fn get_alphas<F:PrimeField>() -> (Option<F>,Option<F>){
         }
         res
     };
-    let anti_alpha=alpha.modpow(&(&p_m_1 - &one - &one), &p_m_1 );
+    let (one,(anti_alpha,y))=gcd(&alpha,&p_m_1);
+    let anti_alpha={
+        let mut corrected=anti_alpha;
+        while corrected.clone()<zero.clone() {
+            corrected+=&p_m_1;
+        }
+        corrected
+    } % &p_m_1;
+    assert_eq!((&alpha * &anti_alpha) % &p_m_1, one.clone());
     (bigint_to_fr(&alpha),bigint_to_fr(&anti_alpha))
 }
 
