@@ -53,10 +53,10 @@ pub fn generate_powers<CS,E>(
         };
         Ok(res) 
 }
-fn generate_roots<CS,E>(
+pub fn generate_roots<CS,E>(
     mut cs: CS,
     x: &AllocatedNum<E>,
-    alphas: &(Option<E::Fr>,Option<E::Fr>)
+    alpha: &E::Fr
 ) -> Result<AllocatedNum<E>, SynthesisError>
     where CS: ConstraintSystem<E>,E:Engine
 {
@@ -70,18 +70,26 @@ fn generate_roots<CS,E>(
                 let last_field_element=E::Fr::from_repr(prime_modulus).unwrap();
                 fr_to_bigint(&last_field_element)+&one
             };
-            let k_inv=fr_to_bigint(&alphas.1.unwrap());
+            let p_m_1=&p - &one;
+            let (_,(anti_alpha,_))=gcd(&fr_to_bigint(alpha),&p_m_1);
+            let anti_alpha={
+                let mut corrected=anti_alpha;
+                while corrected.clone()<zero.clone() {
+                    corrected+=&p_m_1;
+                }
+                corrected
+            } % &p_m_1;
             let a=fr_to_bigint(&x.get_value().unwrap());
-            let res=a.modpow(&k_inv,&p);
+            let res=a.modpow(&anti_alpha,&p);
             Ok(bigint_to_fr(&res).unwrap())
         })?;
 
         {//Prove that the root is correct
-            let alpha_bits_be = get_bits_be(&alphas.0.unwrap());
+            let alpha_bits_be = get_bits_be(alpha);
             let squares={
                 let mut tmp:Vec<AllocatedNum<E>>=vec![root.clone()];
                 for i in 1..alpha_bits_be.len(){
-                    let sqr=tmp.last().unwrap().square(cs.namespace(|| format!("root_result_sqr{}",i)))?;
+                    let sqr=tmp.last().unwrap().square(cs.namespace(|| format!("square{}",i)))?;
                     tmp.push(sqr);
                 }
                 tmp
@@ -106,14 +114,14 @@ fn generate_roots<CS,E>(
             cs.enforce(
                 || "last multiplication has to yield the argument",
                 |lc| lc + tmp.get_variable(),
-                |lc| lc + squares[last_m].get_variable(),
+                |lc| lc + squares[n-1-last_m].get_variable(),
                 |lc| lc + x.get_variable()
             );
     
         };
         Ok(root) 
 }
-fn get_alphas<F:PrimeField>() -> (Option<F>,Option<F>){
+pub fn get_alpha<F:PrimeField>() -> Option<F>{
     let zero=ToBigInt::to_bigint(&0).unwrap();
     let one=ToBigInt::to_bigint(&1).unwrap();
     let p_m_1={
@@ -141,19 +149,13 @@ fn get_alphas<F:PrimeField>() -> (Option<F>,Option<F>){
         }
         res
     };
-    let (one,(anti_alpha,y))=gcd(&alpha,&p_m_1);
-    let anti_alpha={
-        let mut corrected=anti_alpha;
-        while corrected.clone()<zero.clone() {
-            corrected+=&p_m_1;
-        }
-        corrected
-    } % &p_m_1;
-    assert_eq!((&alpha * &anti_alpha) % &p_m_1, one.clone());
-    (bigint_to_fr(&alpha),bigint_to_fr(&anti_alpha))
+    bigint_to_fr(&alpha)
 }
 
-fn gcd(a:&BigInt,b:&BigInt)->(BigInt,(BigInt,BigInt)){
+fn gcd(a:&BigInt,b:&BigInt)
+    // gcd, (coef1, coef2)
+    ->(BigInt,(BigInt,BigInt))
+{
     let zero=ToBigInt::to_bigint(&0).unwrap();
     let one=ToBigInt::to_bigint(&1).unwrap();
     assert!(a.clone()>=zero.clone());
@@ -296,18 +298,23 @@ mod test {
     }
 
     #[test]
+    fn alpha_test(){
+        let alpha=get_alpha::<Fr>();
+        assert_eq!(alpha.unwrap(),Fr::from_str("5").unwrap());
+    }
+
+    #[test]
     fn root_test(){
-        let alphas=get_alphas::<Fr>();
-        assert_eq!(alphas.0.unwrap(),Fr::from_str("5").unwrap());
+        let alpha=get_alpha::<Fr>().unwrap();
         let values=vec!["1","2","3","4","5","6","7","8","9"];
         for x_s in values{
             let mut cs = TestConstraintSystem::<Bn256>::new();
             let x = AllocatedNum::alloc(&mut cs, || Ok(Fr::from_str(&x_s[..]).unwrap()) ).unwrap();
-            let y = generate_roots(&mut cs, &x, &alphas).unwrap();
+            let y = generate_roots(&mut cs, &x, &alpha).unwrap();
 
             let xx= fr_to_bigint(&x.get_value().unwrap());
             let yy= fr_to_bigint(&y.get_value().unwrap());
-            let k=fr_to_bigint(&alphas.0.unwrap());
+            let k=fr_to_bigint(&alpha);
             
             let p={
                 let mut p=Fr::char();
