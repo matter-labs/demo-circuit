@@ -1,5 +1,5 @@
 extern crate num_bigint;
-use self::num_bigint::{BigUint,ToBigUint};
+use self::num_bigint::{BigInt,ToBigInt,Sign};
 use std::str::FromStr;
 use super::uint32::UInt32;
 use super::multieq::MultiEq;
@@ -20,7 +20,6 @@ use bellman::{
 };
 use super::num::AllocatedNum;
 
-
 pub fn generate_powers<CS,E>(
     mut cs: CS,
     x: &AllocatedNum<E>,
@@ -30,18 +29,7 @@ pub fn generate_powers<CS,E>(
 {
         assert_ne!(*alpha,E::Fr::zero());
         assert_ne!(*alpha,E::Fr::one());
-        let alpha_bits_be = {
-            let mut tmp = Vec::with_capacity(E::Fr::NUM_BITS as usize);
-            let mut found_one = false;
-            for b in BitIterator::new(alpha.into_repr()) {
-                found_one |= b;
-                if !found_one {
-                    continue;
-                }
-                tmp.push(b);
-            }
-            tmp
-        };
+        let alpha_bits_be = get_bits_be(alpha);
         let squares={//define square, square of square, etc variables
             let mut tmp:Vec<AllocatedNum<E>>=vec![x.clone()];
             //alpha is constant
@@ -73,36 +61,25 @@ fn generate_roots<CS,E>(
     where CS: ConstraintSystem<E>,E:Engine
 {
         //Calculate the root
-        let result_var=AllocatedNum::alloc(cs.namespace(|| "found root"), ||{
-            let zero=BigUint::from_str("0").unwrap();
-            let one=BigUint::from_str("1").unwrap();
+        let root=AllocatedNum::alloc(cs.namespace(|| "found root"), ||{
+            let zero=ToBigInt::to_bigint(&0).unwrap();
+            let one=ToBigInt::to_bigint(&1).unwrap();
             let p={
-                let mut p=E::Fr::char();
-                p.sub_noborrow(&E::Fr::one().into_repr());
-                let p=E::Fr::from_repr(p).unwrap();
-                fr_to_biguint(&p)+&one
+                let mut prime_modulus=E::Fr::char();
+                prime_modulus.sub_noborrow(&E::Fr::one().into_repr());
+                let last_field_element=E::Fr::from_repr(prime_modulus).unwrap();
+                fr_to_bigint(&last_field_element)+&one
             };
-            let k_inv=fr_to_biguint(&alphas.1.unwrap());
-            let a=fr_to_biguint(&x.get_value().unwrap());
+            let k_inv=fr_to_bigint(&alphas.1.unwrap());
+            let a=fr_to_bigint(&x.get_value().unwrap());
             let res=a.modpow(&k_inv,&p);
-            Ok(biguint_to_fr(&res).unwrap())
+            Ok(bigint_to_fr(&res).unwrap())
         })?;
 
         {//Prove that the root is correct
-            let alpha_bits_be = {
-                let mut tmp = Vec::with_capacity(E::Fr::NUM_BITS as usize);
-                let mut found_one = false;
-                for b in BitIterator::new(alphas.0.unwrap().into_repr()) {
-                    found_one |= b;
-                    if !found_one {
-                        continue;
-                    }
-                    tmp.push(b);
-                }
-                tmp
-            };
+            let alpha_bits_be = get_bits_be(&alphas.0.unwrap());
             let squares={
-                let mut tmp:Vec<AllocatedNum<E>>=vec![result_var.clone()];
+                let mut tmp:Vec<AllocatedNum<E>>=vec![root.clone()];
                 for i in 1..alpha_bits_be.len(){
                     let sqr=tmp.last().unwrap().square(cs.namespace(|| format!("root_result_sqr{}",i)))?;
                     tmp.push(sqr);
@@ -134,34 +111,19 @@ fn generate_roots<CS,E>(
             );
     
         };
-        Ok(result_var) 
+        Ok(root) 
 }
-
-
-fn fr_to_biguint<Fr: PrimeField>(fr: &Fr) -> BigUint {
-    let mut buffer = Vec::<u8>::new();
-    fr.into_repr()
-        .write_be(&mut buffer)
-        .expect("failed to write into Vec<u8>");
-    let value = BigUint::from_bytes_be(&buffer);
-    value
-}
-
-fn biguint_to_fr<F: PrimeField>(bigint: &BigUint) -> Option<F> {
-    F::from_str(&bigint.to_str_radix(10))
-}
-
 fn get_alphas<F:PrimeField>() -> (Option<F>,Option<F>){
-    let zero=BigUint::from_str("0").unwrap();
-    let one=BigUint::from_str("1").unwrap();
+    let zero=ToBigInt::to_bigint(&0).unwrap();
+    let one=ToBigInt::to_bigint(&1).unwrap();
     let p_m_1={
-        let mut p=F::char();
-        p.sub_noborrow(&F::one().into_repr());
-        let p=F::from_repr(p).unwrap();
-        fr_to_biguint(&p)
+        let mut prime_modulus=F::char();
+        prime_modulus.sub_noborrow(&F::one().into_repr());
+        let last_field_element=F::from_repr(prime_modulus).unwrap();
+        fr_to_bigint(&last_field_element)
     };
     let alpha={
-        let mut erath=vec![BigUint::from_str("2").unwrap(),BigUint::from_str("3").unwrap()];
+        let mut erath=vec![ToBigInt::to_bigint(&2).unwrap(),ToBigInt::to_bigint(&3).unwrap()];
         let mut res=erath.last().unwrap().clone();
         while (&p_m_1 % &res)==zero{
             //if this prime number does not fulfill the condition gcd(alpha,p-1)=1
@@ -180,8 +142,54 @@ fn get_alphas<F:PrimeField>() -> (Option<F>,Option<F>){
         res
     };
     let anti_alpha=alpha.modpow(&(&p_m_1 - &one - &one), &p_m_1 );
-    (biguint_to_fr(&alpha),biguint_to_fr(&anti_alpha))
+    (bigint_to_fr(&alpha),bigint_to_fr(&anti_alpha))
 }
+
+fn gcd(a:&BigInt,b:&BigInt)->(BigInt,(BigInt,BigInt)){
+    let zero=ToBigInt::to_bigint(&0).unwrap();
+    let one=ToBigInt::to_bigint(&1).unwrap();
+    assert!(a.clone()>=zero.clone());
+    assert!(b.clone()>zero.clone());
+    if a.clone()>b.clone() {
+        let (d, (x1, y1)) = gcd(b,a);
+        (d,(y1,x1))
+    }else{
+        if a.clone()==zero.clone(){
+            (b.clone(),(zero,one))
+        }else{
+            let (d, (x1, y1)) = gcd(&(b % a), a);
+            (d,(y1 - (b / a) * x1.clone(),x1))
+        }
+    }
+}
+
+fn get_bits_be<F:PrimeField>(alpha:&F)->Vec<bool>{
+    let mut res = Vec::with_capacity(F::NUM_BITS as usize);
+    let mut found_one = false;
+    for b in BitIterator::new(alpha.into_repr()) {
+        found_one |= b;
+        if !found_one {
+            continue;
+        }
+        res.push(b);
+    }
+    res
+}
+
+fn fr_to_bigint<Fr: PrimeField>(fr: &Fr) -> BigInt {
+    let mut buffer = Vec::<u8>::new();
+    fr.into_repr()
+        .write_be(&mut buffer)
+        .expect("failed to write into Vec<u8>");
+    let value = BigInt::from_bytes_be(Sign::Plus,&buffer);
+    value
+}
+
+fn bigint_to_fr<F: PrimeField>(bigint: &BigInt) -> Option<F> {
+    F::from_str(&bigint.to_str_radix(10))
+}
+
+
 
 
 #[cfg(test)]
@@ -193,6 +201,43 @@ mod test {
     use ::circuit::num::AllocatedNum;
     use ::circuit::rescue::*;
 
+    #[test]
+    fn test_gcd(){
+        let values=vec![
+            (2,1,1),
+            (3,1,1),(3,2,1),
+            (4,1,1),(4,2,2),(4,3,1),
+            (5,1,1),(5,2,1),(5,3,1),(5,4,1),
+            (6,1,1),(6,2,2),(6,3,3),(6,4,2),(6,5,1),
+            (7,1,1),(7,2,1),(7,3,1),(7,4,1),(7,5,1),(7,6,1),
+            (8,1,1),(8,2,2),(8,3,1),(8,4,4),(8,5,1),(8,6,2),(8,7,1)
+        ];
+        for (a,b,d) in values{
+            let big_a=ToBigInt::to_bigint(&a).unwrap();
+            let big_b=ToBigInt::to_bigint(&b).unwrap();
+            let big_d=ToBigInt::to_bigint(&d).unwrap();
+            let (res_d,(x,y)) = gcd(&big_a, &big_b);
+            assert_eq!(res_d,big_d.clone());
+            assert_eq!(big_a*x + big_b*y,big_d);
+        }
+    }
+    fn test_gcd2(){
+        for a in 1..1000{
+            for b in 1..1000{
+                let big_a=ToBigInt::to_bigint(&a).unwrap();
+                let big_b=ToBigInt::to_bigint(&b).unwrap();
+                let zero=ToBigInt::to_bigint(&0).unwrap();
+                let (res_d,(x,y)) = gcd(&big_a, &big_b);
+                assert_eq!(&big_a % &res_d,zero.clone());
+                assert_eq!(&big_b % &res_d,zero.clone());
+                assert_eq!(&big_a*&x + &big_b*&y,res_d.clone());
+                let (res_d1,(x1,y1)) = gcd(&big_b, &big_a);
+                assert_eq!(res_d,res_d1);
+                assert_eq!(x,y1);
+                assert_eq!(y,x1);
+            }
+        }
+    }
     #[test]
     fn power_test() {
         let values=vec![
@@ -224,15 +269,15 @@ mod test {
             let a = Fr::from_str(&a_s[..]).unwrap();
             let y = generate_powers(&mut cs,&x,&a).unwrap();
 
-            let xx= fr_to_biguint(&x.get_value().unwrap());
-            let yy= fr_to_biguint(&y.get_value().unwrap());
-            let k=fr_to_biguint(&a);
+            let xx= fr_to_bigint(&x.get_value().unwrap());
+            let yy= fr_to_bigint(&y.get_value().unwrap());
+            let k=fr_to_bigint(&a);
             let p={
                 let mut p=Fr::char();
                 p.sub_noborrow(&Fr::one().into_repr());
                 let p=Fr::from_repr(p).unwrap();
-                let one=BigUint::from_str("1").unwrap();
-                fr_to_biguint(&p)+&one
+                let one=BigInt::from_str("1").unwrap();
+                fr_to_bigint(&p)+&one
             };
             assert_eq!(xx.modpow(&k,&p),yy.clone());
 
@@ -252,16 +297,16 @@ mod test {
             let x = AllocatedNum::alloc(&mut cs, || Ok(Fr::from_str(&x_s[..]).unwrap()) ).unwrap();
             let y = generate_roots(&mut cs, &x, &alphas).unwrap();
 
-            let xx= fr_to_biguint(&x.get_value().unwrap());
-            let yy= fr_to_biguint(&y.get_value().unwrap());
-            let k=fr_to_biguint(&alphas.0.unwrap());
+            let xx= fr_to_bigint(&x.get_value().unwrap());
+            let yy= fr_to_bigint(&y.get_value().unwrap());
+            let k=fr_to_bigint(&alphas.0.unwrap());
             
             let p={
                 let mut p=Fr::char();
                 p.sub_noborrow(&Fr::one().into_repr());
                 let p=Fr::from_repr(p).unwrap();
-                let one=BigUint::from_str("1").unwrap();
-                fr_to_biguint(&p)+&one
+                let one=BigInt::from_str("1").unwrap();
+                fr_to_bigint(&p)+&one
             };
             assert_eq!(yy.modpow(&k,&p),xx.clone());
             assert!(cs.is_satisfied());
