@@ -4,21 +4,6 @@ extern crate rand;
 extern crate ff;
 extern crate franklin_crypto;
 
-use franklin_crypto::circuit::boolean::{Boolean, AllocatedBit};
-
-// use sapling_crypto::circuit::{
-//     Assignment,
-//     boolean,
-//     ecc,
-//     pedersen_hash,
-//     blake2s,
-//     sha256,
-//     num,
-//     multipack,
-//     baby_eddsa,
-//     float_point,
-// };
-
 use bellman::{Circuit, ConstraintSystem, SynthesisError};
 use ff::{Field, PrimeField};
 use pairing::{Engine};
@@ -40,10 +25,6 @@ struct XorCircuit<E: Engine> {
     c: Option<E::Fr>,
 }
 
-macro_rules! csprintln {
-    ($x:expr,$($arg:tt)*) => (if $x {println!($($arg)*)});
-}
-
 // Implementation of our circuit:
 // Given a bit `c`, prove that we know bits `a` and `b` such that `c = a xor b`
 impl<E: Engine> Circuit<E> for XorCircuit<E> {
@@ -59,10 +40,6 @@ impl<E: Engine> Circuit<E> for XorCircuit<E> {
         
         let a = cs.alloc(|| "a", || self.a.grab())?;
 
-        let a_bit = Boolean::from(AllocatedBit::alloc(
-            cs.namespace(|| "bit_a"), Some(true)
-        )?);
-
         // a * a = a
         cs.enforce(|| "a is a boolean", |lc| lc + a, |lc| lc + a, |lc| lc + a);
 
@@ -73,8 +50,6 @@ impl<E: Engine> Circuit<E> for XorCircuit<E> {
 
         // c = a xor b
         let c = cs.alloc_input(|| "c", || self.c.grab())?;
-
-        csprintln!(true, "hey!!! {:?}", a_bit.get_value());
 
         // 2a * b = a + b - c
         cs.enforce(
@@ -139,7 +114,7 @@ fn main() {
 mod tests {
 
 use super::*;
-use sapling_crypto::circuit::test::TestConstraintSystem;
+use franklin_crypto::circuit::test::TestConstraintSystem;
 
     #[test]
     fn test_circuit() {
